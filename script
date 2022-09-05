@@ -1,0 +1,86 @@
+###index ref genome### First download the reference genome with wget
+bwa index REF.fasta 
+
+###index### bam files
+samtools index 
+
+###align### 
+bwa mem -t 16 ref.fa fq_1.fq.gz fq_2.fq.gz | samtools sort -@ 16 -m 8G -O BAM -o myfile.bam
+
+###FASTQC###
+fastqc mmyfile_sorted.bam
+
+#multiqc## to check the quiality of the asssembly
+multiqc .
+
+####################coverage with samtools########## 
+samtools stats myfile.bam  > Stats.txt
+samtools depth -o cov [myfile1_sorted.bam|myfile2_soted.bam|myfile3_sorted.bam]
+
+#################Qualimap ################# takes too much memory
+qualimap bamqc -bam myfile_sorted.bam --java-mem-size=16G
+
+############create a bamfile list ######
+ls *.bam > bam.filelist
+
+#########ANGSD in apocrtita ######### takes 145 hours
+angsd -GL 1 -out genotype_likelihood -doGlf 2 -doMajorMinor 1 -doMaf 2 -bam ./bam.filelist -SNP_pval 1e-6 -anc /ref.fna -ref /ref.fna -P 10
+
+
+#########ANGSD in gobelki ######### because the genome is fragmented the assembly is by coting
+
+cat list_chr.txt | xargs -P 80 -I % angsd -out % -r %: -GL 2 -minInd 25 -doGlf 2 -nThreads 20 -doMajorMinor 1 -doMaf 1 -SNP_pval 1e-10 -minQ 20 -minMapQ 30 -doCounts 1 -setMinDepth 30 -minMaf 0.05 -rmTriallelic 0.05 -bam list_bams.txt
+
+#########Then delete the headers #########
+zcat merged.beagle.gz | sed '1s/marker/x/' | gzip> b1.beagle.gz
+zcat b1.beagle.gz | sed '/marker/d'| gzip> b2.beagle.gz
+zcat b2.beagle.gz | sed '1s/x/marker/' | gzip> clean.beagle.gz
+
+########pcangsd########
+pcangsd -b /data/Paola/pcangsd/genotype_likelihood.beagle.gz -o pca
+
+##then run the pca.cov in R using ggplot - Is necessary to create a .txt with the information of the samples, In the same order than the bam.filelist
+
+########NGSadmix######## 
+ NGSadmix -likes sinmarker.beagle.gz -K 2 -minMaf 0.05 -misTol 0 -minMaf 0 -seed 1 -P 10 
+
+##in R plot ngs.qopt + the .txt with the information of the samples
+
+########NGSadmix with 10 replicats########
+Run the loop:
+for RUN in {1..10}
+do
+    	for K in {2..4}
+    	do
+            	NGSadmix -likes ngsAdmix.beagle.gz -K $K -o ngsAdmix_k${K}_r${RUN} -P 10
+    	done
+done
+
+## then merge the outputs and upload on http://clumpak.tau.ac.il -- to mantain the same colors as the PCA add a extra file with the colors you want 
+
+####SFS### heterozygosity for each invididual
+angsd -i /myfile1_sorted.bam -dosaf 1 -GL 1 -minQ 20 -only_proper_pairs 0 -anc /ref.fna -ref /ref.fna -out myfile1_SFS
+
+### create ml
+path_to_realSFS/realSFS /myfile_SFS.saf.idx > /myfile_SFS_est.ml
+
+##Matrix EEMS
+angsd -GL 1 -out EEMS -doMaf 1  -doMajorMinor 1 -doIBS 1 -doCounts 1 -makeMatrix 1 
+ -bam ./bam.filelist -SNP_pval 1e-10 -anc /ref.fna -ref /ref.fna -P 10
+
+###EEMS
+
+#in runeems_snps/src/ edit the path to EIGEN_INC, BOOST_LIB, BOOST_INC (archive called params-chainjaguar.ini) and edit the demes and the mcmc, three times params-chainjaguar *1, *2, *3
+
+make linux  ##this will update the paths (make linux)
+then save the input files in a new folder /data/newfolder
+
+###go to runeems_snp/src
+#edit params-simno1.in the path is /data/newfolder/datapath
+./runeems_snps --params params-chainjaguar.ini --seed 123
+## download the three folders in the computer and run the R code
+
+##NGS relate
+angsd -b /bam.filelist -gl 2 -domajorminor 1 -snp_pval 1e-10 -domaf 1 -minmaf 0.05 -doGlf 3 -out NGSrelate
+
+/path_to_ngsRelate/ngsRelate -o1 -g NGSrelateoldversion.glf.gz -n 29 – f freq -O newres
